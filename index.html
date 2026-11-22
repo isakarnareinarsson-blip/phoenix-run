@@ -620,6 +620,7 @@ function step(dt){
   }
   camera.lookAt(lookTarget);
   camera.rotateZ(-roll * 0.22);
+  if (window.__camOverride) { camera.position.copy(window.__camOverride.p); camera.lookAt(window.__camOverride.t); }
   if (shake > 0) { shake = Math.max(0, shake - dt * 1.4); camera.position.x += THREE.MathUtils.randFloatSpread(shake); camera.position.y += THREE.MathUtils.randFloatSpread(shake); }
   camera.fov = THREE.MathUtils.lerp(camera.fov, 62 + boostK * 14, 1 - Math.exp(-dt * 4)); camera.updateProjectionMatrix();
 
