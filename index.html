@@ -60,6 +60,14 @@ button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2
 .loading{font:600 13px var(--body);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-top:16px}
 .loading .bar{margin-top:10px}
 .who{margin-top:12px;font-size:13px;color:var(--muted)}
+.streak{margin-top:8px;font:700 13px var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--gold);opacity:0;transition:opacity .25s}
+.streak.on{opacity:1}
+.toast small{display:block;font:600 13px var(--body);letter-spacing:.16em;text-transform:uppercase;color:#fff;text-align:center;margin-top:2px}
+.pauseMsg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font:700 46px var(--display);color:var(--ink);text-shadow:0 4px 30px rgba(0,0,0,.6);text-align:center;pointer-events:none}
+.pauseMsg small{display:block;font:600 12px var(--body);letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-top:8px}
+.pauseMsg[hidden]{display:none}
+.iconBtn{position:fixed;top:max(84px,calc(env(safe-area-inset-top) + 70px));right:max(18px,env(safe-area-inset-right));width:40px;height:40px;padding:0;border-radius:50%;border:1px solid var(--line);background:var(--glass);color:var(--ink);font:600 16px var(--body);backdrop-filter:blur(6px);pointer-events:auto}
+.iconBtn[hidden]{display:none}
 @media (max-width:560px){.rings{font-size:44px}.panel h1{font-size:44px}.panel{padding:20px}}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
@@ -67,7 +75,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2
 <body>
 <div class="hud" id="hud" hidden>
   <div class="top">
-    <div class="rings"><span id="ringCount">0</span><small>Rings</small></div>
+    <div class="rings"><span id="ringCount">0</span><small>Rings</small><div class="streak" id="streak">Streak ×0</div></div>
     <div class="timer"><div class="lbl"><span>Time</span><span id="timeTxt">25.0</span></div><div class="bar" id="timeBar"><i id="timeFill"></i></div></div>
   </div>
   <div class="boost"><div class="lbl">Boost</div><div class="bar"><i id="boostFill"></i></div></div>
@@ -75,11 +83,13 @@ button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2
   <div class="toast" id="toast">+3.5s</div>
 </div>
 <button class="boostBtn" id="boostBtn" type="button">BOOST</button>
+<button class="iconBtn" id="pauseBtn" type="button" aria-label="Pause" hidden>❚❚</button>
+<div class="pauseMsg" id="pauseMsg" hidden>Paused<small>Press Esc or tap to continue</small></div>
 
 <div class="screen" id="scrStart">
   <div class="panel">
     <h1>Phoenix Run</h1>
-    <p>Fly through the golden rings over the sunset sea. Every ring buys you more time. Don't hit the rocks or the water.</p>
+    <p>Fly through the golden rings over the sunset sea. Every ring buys you more time. Hit the centre for a <b>Perfect</b>, chain rings for a <b>streak</b>, skim past rocks for a <b>close call</b>, and grab blue orbs to refill your boost. It gets faster the further you fly.</p>
     <div id="loadBox" class="loading">Loading the world<div class="bar"><i id="loadFill" style="width:5%"></i></div></div>
     <form class="row" id="nameForm" autocomplete="off" hidden>
       <input id="nameInput" maxlength="16" placeholder="Your name" aria-label="Your name" required>
@@ -89,6 +99,7 @@ button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2
     <div class="controls">
       <div><b>Steer</b> mouse, arrows or WASD</div><div><b>Boost</b> hold Space or Shift</div>
       <div><b>Phone</b> drag to steer</div><div><b>Phone boost</b> boost button</div>
+      <div><b>Pause</b> Esc or P</div><div><b>Sound</b> M to mute</div>
     </div>
     <div class="lb"><h3>Leaderboard</h3><ol class="lbList"><li class="empty">Loading…</li></ol></div>
   </div>
@@ -289,7 +300,19 @@ function makeRing(pos, dir){
   const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({color: 0xffc070, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide}));
   g.add(torus, disc);
   g.position.copy(pos); g.lookAt(pos.clone().add(dir));
-  g.userData = {kind: "ring", mat, disc, state: "open", prevZ: null, fade: 0};
+  g.userData = {kind: "ring", mat, disc, state: "open", prevZ: null, fade: 0, shared: true, baseY: pos.y, bob: 0, phase: Math.random() * 6.28};
+  return g;
+}
+// Boost orbs
+const orbGeo = new THREE.IcosahedronGeometry(1.6, 2);
+const orbMat = new THREE.MeshStandardMaterial({color: 0xbfefff, emissive: 0x3ac8ff, emissiveIntensity: 3.2, roughness: 0.2, metalness: 0.1});
+const haloGeo = new THREE.SphereGeometry(3.2, 20, 14);
+const haloMat = new THREE.MeshBasicMaterial({color: 0x5fd4ff, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false});
+function makeOrb(p){
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(orbGeo, orbMat), new THREE.Mesh(haloGeo, haloMat));
+  g.position.copy(p);
+  g.userData = {kind: "orb", shared: true, taken: false, baseY: p.y, phase: Math.random() * 6.28};
   return g;
 }
 
@@ -364,17 +387,22 @@ new GLTFLoader().load(ASSETS + 'models/gltf/Parrot.glb', gltf => {
 }, undefined, () => { buildFallbackBird(); progress(); });
 
 // ================= Game state =================
-const STATE = {loading: 0, start: 1, play: 2, over: 3};
+const STATE = {loading: 0, start: 1, play: 2, over: 3, pause: 4};
 let state = STATE.loading;
 const pos = new THREE.Vector3(), fwd = new THREE.Vector3();
-let yaw = 0, pitch = 0, roll = 0, speed = 38, boost = 1, timeLeft = 25, rings = 0, elapsed = 0;
+let yaw = 0, pitch = 0, roll = 0, speed = 38, boost = 1, timeLeft = 25, rings = 0, elapsed = 0, streak = 0, bestStreak = 0, perfects = 0, generated = 0;
 const BASE_SPEED = 38, BOOST_SPEED = 66;
+// difficulty 0 → 1 over the first 40 rings
+const level = () => Math.min(rings / 40, 1);
+const baseSpeed = () => BASE_SPEED + 14 * level();
+const boostSpeed = () => BOOST_SPEED + 16 * level();
+const ringBonus = () => 3.5 - 1.0 * level();
 let objects = [], ringList = [];
 let genPos = new THREE.Vector3(), genYaw = 0, shake = 0, crashed = false;
 const START_YAW = THREE.MathUtils.degToRad(SUN_AZ) ; // fly toward the sun
 
 function forwardFrom(y, p, out){ return out.set(Math.sin(y) * Math.cos(p), Math.sin(p), Math.cos(y) * Math.cos(p)); }
-function clearWorld(){ objects.forEach(o => { scene.remove(o); if (o.userData.kind !== "ring" && o.geometry) o.geometry.dispose(); }); objects = []; ringList = []; }
+function clearWorld(){ objects.forEach(o => { scene.remove(o); if (!o.userData.shared && o.geometry) o.geometry.dispose(); }); objects = []; ringList = []; }
 function isClear(x, z, rad){
   for (const r of ringList) if (Math.hypot(r.position.x - x, r.position.z - z) < rad + RING_R + 14) return false;
   for (const o of objects) if (o.userData.kind === "stack" && Math.hypot(o.position.x - x, o.position.z - z) < rad + o.userData.r + 6) return false;
@@ -388,13 +416,24 @@ function genRing(){
   genPos.y = THREE.MathUtils.clamp(prevY + THREE.MathUtils.randFloatSpread(36), 16, 85);
   const dir = new THREE.Vector3(Math.sin(genYaw), (genPos.y - prevY) / d, Math.cos(genYaw)).normalize();
   const ring = makeRing(genPos.clone(), dir);
+  generated++;
+  const lv = Math.min(generated / 45, 1);
+  // later rings drift up and down
+  if (generated > 14 && Math.random() < 0.2 + 0.3 * lv) { ring.userData.bob = THREE.MathUtils.randFloat(4, 7 + 6 * lv); ring.userData.baseY = Math.max(genPos.y, ring.userData.bob + 14); ring.position.y = ring.userData.baseY; }
   scene.add(ring); objects.push(ring); ringList.push(ring);
-  // rock spires flanking the path
+  // boost orb between this ring and the previous one
+  if (generated > 2 && Math.random() < 0.3) {
+    const op = new THREE.Vector3(genPos.x - Math.sin(genYaw) * d * 0.5, (genPos.y + prevY) / 2, genPos.z - Math.cos(genYaw) * d * 0.5);
+    op.x += Math.cos(genYaw) * THREE.MathUtils.randFloatSpread(18); op.z -= Math.sin(genYaw) * THREE.MathUtils.randFloatSpread(18); op.y += THREE.MathUtils.randFloatSpread(10);
+    op.y = Math.max(op.y, 10);
+    const orb = makeOrb(op); scene.add(orb); objects.push(orb);
+  }
+  // rock spires flanking the path (more of them, closer in, as it gets harder)
   const side = new THREE.Vector3(Math.cos(genYaw), 0, -Math.sin(genYaw));
-  const n = 2 + (Math.random() * 3 | 0);
+  const n = 2 + (Math.random() * (3 + 3 * lv) | 0);
   for (let i = 0; i < n; i++) {
     const r = THREE.MathUtils.randFloat(7, 17), h = THREE.MathUtils.randFloat(45, 140);
-    const off = (Math.random() < 0.5 ? -1 : 1) * THREE.MathUtils.randFloat(24, 95);
+    const off = (Math.random() < 0.5 ? -1 : 1) * THREE.MathUtils.randFloat(24 - 4 * lv, 95 - 30 * lv);
     const along = THREE.MathUtils.randFloatSpread(120);
     const x = genPos.x + side.x * off + Math.sin(genYaw) * along, z = genPos.z + side.z * off + Math.cos(genYaw) * along;
     if (!isClear(x, z, r)) continue;
@@ -411,6 +450,7 @@ function genRing(){
 function resetGame(){
   clearWorld();
   yaw = START_YAW; pitch = 0; roll = 0; speed = BASE_SPEED; boost = 1; timeLeft = 25; rings = 0; elapsed = 0; crashed = false;
+  streak = 0; bestStreak = 0; perfects = 0; generated = 0; updateStreak();
   pos.set(0, 42, 0);
   genPos.copy(pos); genYaw = yaw;
   genPos.x -= Math.sin(genYaw) * 40; genPos.z -= Math.cos(genYaw) * 40; // first ring comes up soon
@@ -434,6 +474,8 @@ addEventListener("keydown", e => {
   keys[e.code] = true;
   if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
   if (e.code === "Space" && state === STATE.over && performance.now() - overAt > 700) startGame();
+  if (e.code === "Escape" || e.code === "KeyP") { if (state === STATE.play) setPaused(true); else if (state === STATE.pause) setPaused(false); }
+  if (e.code === "KeyM") toggleMute();
 });
 addEventListener("keyup", e => { keys[e.code] = false; });
 addEventListener("pointermove", e => {
@@ -442,6 +484,7 @@ addEventListener("pointermove", e => {
 });
 addEventListener("pointerdown", e => {
   if (e.target.closest("button,input,form,.panel")) return;
+  if (state === STATE.pause) { setPaused(false); return; }
   if (e.pointerType !== "mouse") {
     isTouch = true; $("boostBtn").style.display = state === STATE.play ? "block" : "none";
     if (touch.id === null) { touch.id = e.pointerId; touch.sx = touch.x = e.clientX; touch.sy = touch.y = e.clientY; }
@@ -466,17 +509,19 @@ function readInput(){
 }
 
 // ================= Audio =================
-let actx = null, windGain = null, windFilter = null;
+let actx = null, windGain = null, windFilter = null, master = null, muted = store.get("muted", "0") === "1";
+function toggleMute(){ muted = !muted; store.set("muted", muted ? "1" : "0"); if (master) master.gain.value = muted ? 0 : 1; toast(muted ? "Sound off" : "Sound on"); }
 function initAudio(){
   if (actx) return;
   try {
     actx = new (window.AudioContext || window.webkitAudioContext)();
+    master = actx.createGain(); master.gain.value = muted ? 0 : 1; master.connect(actx.destination);
     const len = actx.sampleRate * 2, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
     let last = 0; for (let i = 0; i < len; i++) { last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = last * 3.5; }
     const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
     windFilter = actx.createBiquadFilter(); windFilter.type = "lowpass"; windFilter.frequency.value = 500;
     windGain = actx.createGain(); windGain.gain.value = 0;
-    src.connect(windFilter).connect(windGain).connect(actx.destination); src.start();
+    src.connect(windFilter).connect(windGain).connect(master); src.start();
   } catch (e) { actx = null; }
 }
 function tone(freq, dur, type = "sine", vol = 0.08, delay = 0){
@@ -484,13 +529,24 @@ function tone(freq, dur, type = "sine", vol = 0.08, delay = 0){
   const o = actx.createOscillator(), g = actx.createGain(), t0 = actx.currentTime + delay;
   o.type = type; o.frequency.setValueAtTime(freq, t0);
   g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  o.connect(g).connect(actx.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+  o.connect(g).connect(master); o.start(t0); o.stop(t0 + dur + 0.05);
 }
+function orbSound(){ tone(880, 0.25, "triangle", 0.05); tone(1320, 0.35, "sine", 0.04, 0.06); tone(1760, 0.4, "sine", 0.03, 0.12); }
+function whoosh(){ tone(220, 0.35, "sine", 0.05); tone(330, 0.3, "sine", 0.03, 0.04); }
 function chime(n){ const base = 523.25 * Math.pow(2, Math.min(n, 24) / 24); [1, 1.25, 1.5, 2].forEach((m, i) => tone(base * m, 0.5, "sine", 0.05, i * 0.05)); }
 function crashSound(){ if (!actx) return; tone(90, 0.8, "sawtooth", 0.09); tone(60, 1.0, "triangle", 0.1, 0.05); }
 
 // ================= Screens =================
-function showScreen(id){ ["scrStart", "scrOver"].forEach(s => $(s).hidden = s !== id); $("hud").hidden = id !== null; $("boostBtn").style.display = id === null && isTouch ? "block" : "none"; }
+function showScreen(id){ ["scrStart", "scrOver"].forEach(s => $(s).hidden = s !== id); $("hud").hidden = id !== null; $("boostBtn").style.display = id === null && isTouch ? "block" : "none"; $("pauseBtn").hidden = id !== null; }
+function setPaused(p){
+  if (p && state === STATE.play) { state = STATE.pause; $("pauseMsg").hidden = false; touchBoost = false; touch.id = null; if (actx) actx.suspend(); }
+  else if (!p && state === STATE.pause) { state = STATE.play; $("pauseMsg").hidden = true; last = performance.now(); if (actx) actx.resume(); }
+}
+$("pauseBtn").addEventListener("pointerdown", e => { e.stopPropagation(); });
+$("pauseBtn").addEventListener("click", () => setPaused(state === STATE.play));
+document.addEventListener("visibilitychange", () => { if (document.hidden) setPaused(true); });
+addEventListener("blur", () => setPaused(true));
+function updateStreak(){ const s = $("streak"); s.textContent = `Streak ×${streak}`; s.classList.toggle("on", streak >= 2); }
 function ready(){
   state = STATE.start;
   $("loadBox").hidden = true; $("nameForm").hidden = false;
@@ -516,12 +572,13 @@ function gameOver(reason){
   $("overReason").textContent = reason;
   $("overScore").textContent = rings;
   $("overBest").className = isBest && rings > 0 ? "who newbest" : "who";
-  $("overBest").textContent = isBest && rings > 0 ? "New personal best!" : `Your best: ${best}`;
+  $("overBest").textContent = (isBest && rings > 0 ? "New personal best!" : `Your best: ${best}`) + ` · Longest streak ${bestStreak} · Perfects ${perfects}`;
+  $("pauseBtn").hidden = true;
   setTimeout(() => { if (state === STATE.over) showScreen("scrOver"); }, crashed ? 900 : 200);
   submitScore(rings);
 }
 let toastTimer;
-function toast(txt){ const t = $("toast"); t.textContent = txt; t.classList.remove("on"); void t.offsetWidth; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 700); }
+function toast(txt, sub){ const t = $("toast"); t.textContent = txt; if (sub) { const s = document.createElement("small"); s.textContent = sub; t.appendChild(s); } t.classList.remove("on"); void t.offsetWidth; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 700); }
 
 // ================= Simulation =================
 const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), camTarget = new THREE.Vector3(), lookTarget = new THREE.Vector3();
@@ -544,7 +601,7 @@ function step(dt){
     // boost
     const wantBoost = inp.boost && boost > 0.02;
     boost = THREE.MathUtils.clamp(boost + (wantBoost ? -0.32 : 0.11) * dt, 0, 1);
-    speed = THREE.MathUtils.lerp(speed, wantBoost ? BOOST_SPEED : BASE_SPEED, 1 - Math.exp(-dt * 2.5));
+    speed = THREE.MathUtils.lerp(speed, wantBoost ? boostSpeed() : baseSpeed(), 1 - Math.exp(-dt * 2.5));
     // steering
     yaw += -inp.sx * 1.25 * dt;
     pitch = THREE.MathUtils.lerp(pitch, inp.sy * 0.62, 1 - Math.exp(-dt * 3));
@@ -561,6 +618,11 @@ function step(dt){
     tmpV.copy(fwd).multiplyScalar(-1.4).add(pos);
     const rate = wantBoost ? 10 : 5;
     for (let i = 0; i < rate; i++) emit(tmpV.x + THREE.MathUtils.randFloatSpread(0.8), tmpV.y + THREE.MathUtils.randFloatSpread(0.5), tmpV.z + THREE.MathUtils.randFloatSpread(0.8), -fwd.x * 4 + THREE.MathUtils.randFloatSpread(2), -fwd.y * 4 + THREE.MathUtils.randFloat(0, 2), -fwd.z * 4 + THREE.MathUtils.randFloatSpread(2), THREE.MathUtils.randFloat(0.5, 1.1), THREE.MathUtils.randFloat(0.35, 0.8), 1, 0.6, 0.22, -2, 0.97);
+    // flame streams off both wingtips
+    bird.updateMatrixWorld();
+    for (const sx of [-2.3, 2.3]) { tmpV2.set(sx, 0.1, -0.3); bird.localToWorld(tmpV2); emit(tmpV2.x, tmpV2.y, tmpV2.z, -fwd.x * 2, -fwd.y * 2 + 0.5, -fwd.z * 2, wantBoost ? 0.7 : 0.45, wantBoost ? 0.55 : 0.38, 1, 0.72, 0.3, -1, 0.97); }
+    // speed streaks while boosting
+    if (wantBoost && state === STATE.play) for (let i = 0; i < 3; i++) { const a = Math.random() * 6.28, rr = THREE.MathUtils.randFloat(5, 14); tmpV2.copy(pos).addScaledVector(fwd, THREE.MathUtils.randFloat(25, 45)); tmpV2.x += Math.cos(a) * rr; tmpV2.y += Math.sin(a) * rr * 0.7; tmpV2.z += Math.sin(a + 1.3) * rr * 0.5; emit(tmpV2.x, tmpV2.y, tmpV2.z, 0, 0, 0, 0.5, 0.45, 0.75, 0.95, 1, 0, 1); }
   }
   if (state === STATE.play) {
     timeLeft -= dt;
@@ -569,13 +631,28 @@ function step(dt){
       const u = r.userData; if (u.state !== "open") continue;
       tmpV.copy(pos); r.worldToLocal(tmpV);
       if (u.prevZ !== null && u.prevZ < 0 && tmpV.z >= 0 && Math.abs(tmpV.z) < 20) {
-        if (Math.hypot(tmpV.x, tmpV.y) < RING_R + 0.4) {
-          u.state = "passed"; rings++; timeLeft = Math.min(timeLeft + 3.5, 40);
-          $("ringCount").textContent = rings; toast("+3.5s"); chime(rings);
+        const off = Math.hypot(tmpV.x, tmpV.y);
+        if (off < RING_R + 0.4) {
+          const perfect = off < RING_R * 0.38;
+          u.state = "passed"; rings++; streak++; bestStreak = Math.max(bestStreak, streak); if (perfect) perfects++;
+          const bonus = ringBonus() + (perfect ? 1 : 0) + Math.min(streak - 1, 10) * 0.1;
+          timeLeft = Math.min(timeLeft + bonus, 40);
+          if (perfect) boost = Math.min(1, boost + 0.15);
+          $("ringCount").textContent = rings; updateStreak();
+          toast("+" + bonus.toFixed(1) + "s", perfect ? (streak >= 3 ? `Perfect · streak ×${streak}` : "Perfect") : (streak >= 3 ? `Streak ×${streak}` : ""));
+          chime(rings); if (perfect) tone(1568, 0.6, "sine", 0.035, 0.18);
           for (let i = 0; i < 90; i++) { const a = i / 90 * 6.28; tmpV2.set(Math.cos(a) * RING_R, Math.sin(a) * RING_R, 0); r.localToWorld(tmpV2); emit(tmpV2.x, tmpV2.y, tmpV2.z, (tmpV2.x - r.position.x) * 1.2, (tmpV2.y - r.position.y) * 1.2, (tmpV2.z - r.position.z) * 1.2, 0.9, 1.6, 1, 0.8, 0.35, 0, 0.94); }
-        } else if (Math.hypot(tmpV.x, tmpV.y) < RING_R * 4) { u.state = "missed"; }
+        } else if (off < RING_R * 4) { u.state = "missed"; if (streak >= 3) toast("Streak lost"); streak = 0; updateStreak(); }
       }
       u.prevZ = tmpV.z;
+    }
+    // boost orbs
+    for (const o of objects) {
+      const u = o.userData; if (u.kind !== "orb" || u.taken) continue;
+      if (o.position.distanceToSquared(pos) < 5.2 * 5.2) {
+        u.taken = true; o.visible = false; boost = Math.min(1, boost + 0.5); orbSound(); toast("Boost +50%");
+        for (let i = 0; i < 50; i++) { const a = Math.random() * 6.28, b = Math.random() * 3.14, s = THREE.MathUtils.randFloat(4, 12); emit(o.position.x, o.position.y, o.position.z, Math.cos(a) * Math.sin(b) * s, Math.cos(b) * s, Math.sin(a) * Math.sin(b) * s, 0.7, 1.1, 0.5, 0.9, 1, 0, 0.93); }
+      }
     }
     // collisions
     if (pos.y < 0.6) crash("You hit the water");
@@ -585,6 +662,7 @@ function step(dt){
         const dx = pos.x - o.position.x, dz = pos.z - o.position.z, d = Math.hypot(dx, dz);
         const rAtH = u.r * (1 - 0.5 * THREE.MathUtils.clamp(pos.y / u.h, 0, 1));
         if (pos.y < u.h + 2 && d < rAtH + 0.6) { crash("You hit a rock"); break; }
+        if (!u.near && pos.y < u.h && d < rAtH + 4.5) { u.near = true; timeLeft = Math.min(timeLeft + 0.5, 40); shake = Math.max(shake, 0.25); whoosh(); toast("Close call", "+0.5s"); }
       } else if (u.kind === "island") {
         const dx = (pos.x - o.position.x) / u.R, dz = (pos.z - o.position.z) / u.R, dy = (pos.y + 6) / u.H;
         if (dx * dx + dz * dz + dy * dy < 0.85) { crash("You hit an island"); break; }
@@ -598,13 +676,18 @@ function step(dt){
     for (let i = objects.length - 1; i >= 0; i--) {
       const o = objects[i];
       tmpV.subVectors(o.position, pos);
-      if (tmpV.lengthSq() > 900 * 900 && tmpV.dot(fwd) < 0) { scene.remove(o); if (o.userData.kind !== "ring") o.geometry.dispose(); objects.splice(i, 1); const ri = ringList.indexOf(o); if (ri >= 0) ringList.splice(ri, 1); }
+      if (tmpV.lengthSq() > 900 * 900 && tmpV.dot(fwd) < 0) { scene.remove(o); if (!o.userData.shared) o.geometry.dispose(); objects.splice(i, 1); const ri = ringList.indexOf(o); if (ri >= 0) ringList.splice(ri, 1); }
     }
   }
   // ring visuals
   let nextRing = null, nextD = Infinity;
+  for (const o of objects) {
+    const u = o.userData;
+    if (u.kind === "orb" && !u.taken) { o.position.y = u.baseY + Math.sin(elapsed * 2 + u.phase) * 1.2; o.rotation.y += dt * 1.5; o.children[1].scale.setScalar(1 + 0.15 * Math.sin(elapsed * 5 + u.phase)); }
+  }
   for (const r of ringList) {
     const u = r.userData;
+    if (u.bob && u.state === "open") r.position.y = u.baseY + Math.sin(elapsed * 1.1 + u.phase) * u.bob;
     if (u.state === "open") { const d = r.position.distanceToSquared(pos); if (d < nextD) { nextD = d; nextRing = r; } }
     if (u.state === "passed") { u.fade = Math.min(1, u.fade + dt * 2); r.scale.setScalar(1 + u.fade * 0.6); u.mat.opacity = 1 - u.fade; u.mat.transparent = true; u.disc.material.opacity = 0; if (u.fade >= 1) r.visible = false; }
     else if (u.state === "missed") { u.mat.emissiveIntensity = THREE.MathUtils.lerp(u.mat.emissiveIntensity, 0.15, dt * 3); u.mat.color.lerp(tmpC.set(0x555555), dt * 3); u.disc.material.opacity = 0; }
@@ -613,7 +696,7 @@ function step(dt){
   if (nextRing) { const u = nextRing.userData, pulse = 0.5 + 0.5 * Math.sin(elapsed * 6); u.mat.emissiveIntensity = 3.2 + pulse * 1.8; u.disc.material.opacity = 0.08 + pulse * 0.08; }
 
   // camera
-  const boostK = (speed - BASE_SPEED) / (BOOST_SPEED - BASE_SPEED);
+  const boostK = THREE.MathUtils.clamp((speed - baseSpeed()) / (boostSpeed() - baseSpeed()), 0, 1);
   if (bird.visible) {
     camTarget.copy(pos).addScaledVector(fwd, -10.5 - boostK * 4).addScaledVector(UP, 3.0);
     camera.position.lerp(camTarget, 1 - Math.exp(-dt * 4.5));
@@ -663,14 +746,15 @@ function updateArrow(r){
 let last = performance.now();
 function frame(now){
   const dt = Math.min((now - last) / 1000, 1 / 20); last = now;
-  if (state !== STATE.loading) step(dt);
+  if (state === STATE.pause) { /* frozen frame */ }
+  else if (state !== STATE.loading) step(dt);
   else { camera.position.set(Math.sin(now / 4000) * 40, 40, Math.cos(now / 4000) * 40); camera.lookAt(0, 30, 300); water.material.uniforms.time.value += dt * 0.6; }
   composer.render();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 document.addEventListener("visibilitychange", () => { last = performance.now(); });
-window.__game = { get state(){ return state; }, get rings(){ return rings; }, get pos(){ return pos; }, get timeLeft(){ return timeLeft; }, startGame, ringList: () => ringList, bird, birdModel, camera, get yaw(){ return yaw; }, setYawPitch(y, p){ yaw = y; pitch = p; } };
+window.__game = { get state(){ return state; }, get rings(){ return rings; }, get pos(){ return pos; }, get timeLeft(){ return timeLeft; }, startGame, setPaused, ringList: () => ringList, objects: () => objects, get streak(){ return streak; }, get perfects(){ return perfects; }, get speed(){ return speed; }, get boost(){ return boost; }, bird, birdModel, camera, get yaw(){ return yaw; }, setYawPitch(y, p){ yaw = y; pitch = p; } };
 loadBoard();
 setInterval(() => { if (!document.hidden && state !== STATE.play) loadBoard(); }, 15000);
 </script>
